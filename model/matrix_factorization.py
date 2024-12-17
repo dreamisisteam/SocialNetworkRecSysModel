@@ -40,9 +40,7 @@ class UserRecommender:
             Tuple[np.ndarray, np.ndarray]: The initialized matrices.
         """
         num_users, num_questions = self.data.shape
-        # User preference matrix
         P = np.random.rand(num_users, self.k)
-        # Item (question) feature matrix
         Q = np.random.rand(num_questions, self.k)
         return P, Q
 
@@ -57,11 +55,11 @@ class UserRecommender:
             float: The computed loss value.
         """
         data_hat = np.dot(P, Q.T)
-
         error = (self.data - data_hat) * (self.data > 0)
         mse = np.sum(np.square(error))
-
-        reg_term = self.reg_param * (np.linalg.norm(P) + np.linalg.norm(Q))
+        reg_term = self.reg_param * (
+            np.linalg.norm(P) ** 2 + np.linalg.norm(Q) ** 2
+        )
         return mse + reg_term
 
     def matrix_factorization(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -72,27 +70,33 @@ class UserRecommender:
         """
         num_users, num_questions = self.data.shape
         P, Q = self.initialize_matrices()
-        Q = Q.T  # Transpose Q for ease of computation
 
-        # Создаем маску для известных значений
-        mask = self.data > 0  # mask[i, j] = True, если R[i, j] известно
+        mask = self.data > 0
+        prev_loss = float("inf")
 
         for step in range(self.steps):
-            R_hat = np.dot(P, Q)
+            R_hat = np.dot(P, Q.T)
             error_matrix = (self.data - R_hat) * mask
 
-            P_grad = np.dot(error_matrix, Q.T) - self.reg_param * P
-            Q_grad = np.dot(error_matrix.T, P) - self.reg_param * Q.T
+            P_grad = -2 * np.dot(error_matrix, Q) + self.reg_param * P
+            Q_grad = -2 * np.dot(error_matrix.T, P) + self.reg_param * Q
 
-            P += self.alpha * P_grad
-            Q += self.alpha * Q_grad.T
+            P -= self.alpha * P_grad
+            Q -= self.alpha * Q_grad
 
-            if self.verbose:
-                if step % 100 == 0:
-                    loss = self.loss_function(P, Q.T)
-                    print(f"Step {step}/{self.steps}, loss: {loss}")
+            loss = self.loss_function(P, Q)
 
-        return P, Q.T
+            if self.verbose and step % 100 == 0:
+                print(f"Step {step}/{self.steps}, loss: {loss:.4f}")
+
+            # assertion for coveraging
+            if abs(prev_loss - loss) < 1e-5:
+                if self.verbose:
+                    print(f"Converged at step {step}, loss: {loss:.4f}")
+                break
+            prev_loss = loss
+
+        return P, Q
 
     def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """Calculates cosine similarity between two vectors.
@@ -107,27 +111,25 @@ class UserRecommender:
         dot_product = np.dot(vec1, vec2)
         norm_vec1 = np.linalg.norm(vec1)
         norm_vec2 = np.linalg.norm(vec2)
-        if norm_vec1 == 0 or norm_vec2 == 0:
-            return 0.0
-        return dot_product / (norm_vec1 * norm_vec2)
+        return (
+            0.0
+            if norm_vec1 == 0 or norm_vec2 == 0
+            else dot_product / (norm_vec1 * norm_vec2)
+        )
 
     def predict(self, user_id: int, top_n: int = 3) -> List[Tuple[int, float]]:
         """
         Recommends top-N users similar to the given user.
-
-        Args:
-            user_id (int): ID of the user to generate recommendations for.
-            top_n (int): Number of recommended users.
         """
         user_vector = self.P[user_id]
-        similarities: List[Tuple[int, float]] = []
-
-        for other_user_id in range(self.P.shape[0]):
-            if other_user_id != user_id:
-                similarity = self.cosine_similarity(
-                    user_vector, self.P[other_user_id]
-                )
-                similarities.append((other_user_id, similarity))
+        similarities: List[Tuple[int, float]] = [
+            (
+                other_user_id,
+                self.cosine_similarity(user_vector, self.P[other_user_id]),
+            )
+            for other_user_id in range(self.P.shape[0])
+            if other_user_id != user_id
+        ]
 
         similarities.sort(key=lambda x: x[1], reverse=True)
         top_similar_users = similarities[:top_n]
@@ -136,8 +138,8 @@ class UserRecommender:
             print(f"Top-{top_n} recommended users for User {user_id + 1}:")
             for idx, (user, similarity) in enumerate(top_similar_users):
                 print(
-                    f"{idx + 1}: User {user + 1} \
-                        (Similarity: {similarity:.4f})"
+                    f"{idx + 1}: User {user + 1}"
+                    f"(Similarity: {similarity:.4f})"
                 )
 
         return top_similar_users
@@ -151,7 +153,7 @@ if __name__ == "__main__":
 
     # Creating class object
     recommender = UserRecommender(
-        df, k=5, steps=500, alpha=0.002, reg_param=0.02, verbose=False
+        df, k=5, steps=500, alpha=0.002, reg_param=0.02, verbose=True
     )
 
     # Make prediction for user with id=0. Top-3 suggested friends
